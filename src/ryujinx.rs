@@ -74,7 +74,7 @@ fn build_remote_save_map(
   if [ -f "$f" ]; then
     tid=$(xxd -p -l 8 "$f")
     stype=$(xxd -p -s 32 -l 4 "$f")
-    newest=$(find "$d" -type f -name '*.sav' -exec stat -c %Y {{}} + 2>/dev/null || find "$d" -type f -name '*.sav' -exec stat -f %m {{}} + 2>/dev/null | sort -rn | head -1)
+    newest=$(find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -c %Y {{}} + 2>/dev/null || find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -f %m {{}} + 2>/dev/null | sort -rn | head -1)
     echo "$(basename "$d")|$tid|$stype|${{newest:-0}}"
   fi
 done"#
@@ -214,7 +214,7 @@ pub fn sync_saves(
         }
 
         let excludes = vec![".lock".to_string()];
-        rsync_one_way(&src, &dst, &excludes, &[], dry_run)?;
+        rsync_one_way(&src, &dst, &excludes, &["--delete"], dry_run)?;
 
         results.push(serde_json::json!({
             "target": "ryujinx",

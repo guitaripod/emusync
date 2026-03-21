@@ -3,16 +3,30 @@ mod directory;
 mod ryujinx;
 mod sync;
 
+use std::io::IsTerminal;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use config::DetectedConfig;
 use sync::Direction;
 
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
-const BOLD: &str = "\x1b[1m";
-const RESET: &str = "\x1b[0m";
+fn use_color() -> bool {
+    std::io::stderr().is_terminal() && std::env::var("NO_COLOR").is_err()
+}
+
+fn green() -> &'static str {
+    if use_color() { "\x1b[32m" } else { "" }
+}
+fn yellow() -> &'static str {
+    if use_color() { "\x1b[33m" } else { "" }
+}
+fn bold() -> &'static str {
+    if use_color() { "\x1b[1m" } else { "" }
+}
+fn reset() -> &'static str {
+    if use_color() { "\x1b[0m" } else { "" }
+}
 
 #[derive(Parser)]
 #[command(name = "emusync", about = "Cross-machine emulation sync over SSH")]
@@ -78,7 +92,7 @@ fn run_sync(
 
     for target in targets {
         if !json {
-            eprintln!("{BOLD}[{}]{RESET} ({})", target.name, target.target_type);
+            eprintln!("{}[{}]{} ({})", bold(), target.name, reset(), target.target_type);
         }
 
         let results = match target.target_type.as_str() {
@@ -115,7 +129,7 @@ fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value
 
     for target in &detected.config.targets {
         if !json {
-            eprintln!("{BOLD}[{}]{RESET} ({})", target.name, target.target_type);
+            eprintln!("{}[{}]{} ({})", bold(), target.name, reset(), target.target_type);
         }
 
         match target.target_type.as_str() {
@@ -127,14 +141,15 @@ fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value
                     .unwrap_or(false);
 
                 if !json {
+                    let check = if local_exists {
+                        format!("{}ok{}", green(), reset())
+                    } else {
+                        "missing".to_string()
+                    };
                     eprintln!(
-                        "  local:  {} {}",
+                        "  local:  {} [{}]",
                         local_path.unwrap_or(&"not configured".to_string()),
-                        if local_exists {
-                            format!("{GREEN}✓{RESET}")
-                        } else {
-                            "✗".to_string()
-                        }
+                        check
                     );
                     eprintln!(
                         "  remote: {}",
@@ -167,11 +182,11 @@ fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value
                                 .unwrap_or("unknown");
 
                             let color = match dir {
-                                "synced" => GREEN,
-                                "push" | "pull" => YELLOW,
+                                "synced" => green(),
+                                "push" | "pull" => yellow(),
                                 _ => "",
                             };
-                            eprintln!("  {name}: {color}{dir}{RESET}");
+                            eprintln!("  {name}: {color}{dir}{}", reset());
                         }
                     }
                 }
@@ -208,8 +223,8 @@ fn main() -> Result<()> {
 
             if !cli.json {
                 eprintln!(
-                    "{BOLD}emusync{RESET} — local: {GREEN}{}{RESET}, remote: {}",
-                    detected.local.name, detected.remote.name
+                    "{}emusync{} — local: {}{}{}, remote: {}",
+                    bold(), reset(), green(), detected.local.name, reset(), detected.remote.name
                 );
                 eprintln!();
             }
@@ -227,8 +242,8 @@ fn main() -> Result<()> {
             if !cli.json {
                 let mode = if cli.dry_run { " (dry run)" } else { "" };
                 eprintln!(
-                    "{BOLD}emusync{RESET} — local: {GREEN}{}{RESET}, remote: {}{mode}",
-                    detected.local.name, detected.remote.name
+                    "{}emusync{} — local: {}{}{}, remote: {}{mode}",
+                    bold(), reset(), green(), detected.local.name, reset(), detected.remote.name
                 );
                 eprintln!();
             }
@@ -252,11 +267,11 @@ fn main() -> Result<()> {
             } else {
                 eprintln!();
                 if results.is_empty() {
-                    eprintln!("{GREEN}everything up to date{RESET}");
+                    eprintln!("{}everything up to date{}", green(), reset());
                 } else {
                     eprintln!(
-                        "{GREEN}synced {} item(s){RESET}",
-                        results.len()
+                        "{}synced {} item(s){}",
+                        green(), results.len(), reset()
                     );
                 }
             }
