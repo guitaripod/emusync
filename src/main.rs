@@ -29,32 +29,56 @@ fn reset() -> &'static str {
 }
 
 #[derive(Parser)]
-#[command(name = "emusync", about = "Cross-machine emulation sync over SSH")]
+#[command(
+    name = "emusync",
+    about = "Cross-machine emulation sync over SSH",
+    long_about = "Sync emulator saves, mods, and shader caches between machines over SSH.\n\n\
+        Supports two target types:\n  \
+        - \"directory\": bidirectional rsync (newest file wins)\n  \
+        - \"ryujinx\": title-ID-aware save/mod/shader sync\n\n\
+        Ryujinx saves use numbered folders that differ per machine. emusync parses\n\
+        the binary ExtraData0 to map title IDs, syncing by game identity.\n\n\
+        Config: ~/.config/emusync/config.json\n\
+        Run `emusync init` to generate a template.",
+    after_help = "Examples:\n  \
+        emusync                              Sync all targets\n  \
+        emusync sync                         Same as above\n  \
+        emusync sync duckstation             Sync a specific target\n  \
+        emusync sync ryujinx --only saves    Sync only Ryujinx saves\n  \
+        emusync sync --push                  Force local -> remote\n  \
+        emusync status                       Show sync state\n  \
+        emusync status --json                Machine-readable status\n  \
+        emusync --dry-run                    Preview without changes"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Preview sync operations without making changes")]
     dry_run: bool,
 
-    #[arg(long, global = true, conflicts_with = "pull")]
+    #[arg(long, global = true, conflicts_with = "pull", help = "Force sync direction: local -> remote")]
     push: bool,
 
-    #[arg(long, global = true, conflicts_with = "push")]
+    #[arg(long, global = true, conflicts_with = "push", help = "Force sync direction: remote -> local")]
     pull: bool,
 
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Output structured JSON to stdout (for AI agents and scripts)")]
     json: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(about = "Sync one or all targets (default when no subcommand given)")]
     Sync {
+        #[arg(help = "Target name from config (omit to sync all targets)")]
         target: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "For ryujinx targets: sync only a subtarget [saves|mods|shaders]")]
         only: Option<String>,
     },
+    #[command(about = "Show sync status for all targets (file counts, Ryujinx save mappings)")]
     Status,
+    #[command(about = "Generate a config template at ~/.config/emusync/config.json")]
     Init,
 }
 
