@@ -1,0 +1,267 @@
+mod config;
+mod directory;
+mod ryujinx;
+mod sync;
+
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+
+use config::DetectedConfig;
+use sync::Direction;
+
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const BOLD: &str = "\x1b[1m";
+const RESET: &str = "\x1b[0m";
+
+#[derive(Parser)]
+#[command(name = "emusync", about = "Cross-machine emulation sync over SSH")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    #[arg(long, global = true)]
+    dry_run: bool,
+
+    #[arg(long, global = true, conflicts_with = "pull")]
+    push: bool,
+
+    #[arg(long, global = true, conflicts_with = "push")]
+    pull: bool,
+
+    #[arg(long, global = true)]
+    json: bool,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Sync {
+        target: Option<String>,
+        #[arg(long)]
+        only: Option<String>,
+    },
+    Status,
+    Init,
+}
+
+fn direction_from_flags(push: bool, pull: bool) -> Direction {
+    if push {
+        Direction::Push
+    } else if pull {
+        Direction::Pull
+    } else {
+        Direction::Auto
+    }
+}
+
+fn run_sync(
+    detected: &DetectedConfig,
+    target_name: Option<&str>,
+    only: Option<&str>,
+    direction: Direction,
+    dry_run: bool,
+    json: bool,
+) -> Result<Vec<serde_json::Value>> {
+    let mut all_results = Vec::new();
+
+    let targets: Vec<&config::Target> = if let Some(name) = target_name {
+        let t = detected
+            .config
+            .targets
+            .iter()
+            .find(|t| t.name == name)
+            .ok_or_else(|| anyhow::anyhow!("unknown target: {name}"))?;
+        vec![t]
+    } else {
+        detected.config.targets.iter().collect()
+    };
+
+    for target in targets {
+        if !json {
+            eprintln!("{BOLD}[{}]{RESET} ({})", target.name, target.target_type);
+        }
+
+        let results = match target.target_type.as_str() {
+            "directory" => {
+                if only.is_some() {
+                    if !json {
+                        eprintln!("  --only is not supported for directory targets");
+                    }
+                    vec![]
+                } else {
+                    let r = directory::sync(detected, target, direction, dry_run, json)?;
+                    r.into_iter().collect()
+                }
+            }
+            "ryujinx" => {
+                ryujinx::sync_all(detected, target, only, direction, dry_run, json)?
+            }
+            other => {
+                if !json {
+                    eprintln!("  unknown target type: {other}");
+                }
+                vec![]
+            }
+        };
+
+        all_results.extend(results);
+    }
+
+    Ok(all_results)
+}
+
+fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value> {
+    let mut targets_status = serde_json::Map::new();
+
+    for target in &detected.config.targets {
+        if !json {
+            eprintln!("{BOLD}[{}]{RESET} ({})", target.name, target.target_type);
+        }
+
+        match target.target_type.as_str() {
+            "directory" => {
+                let local_path = detected.local_path(target);
+                let remote_path = detected.remote_path(target);
+                let local_exists = local_path
+                    .map(|p| std::path::Path::new(p).exists())
+                    .unwrap_or(false);
+
+                if !json {
+                    eprintln!(
+                        "  local:  {} {}",
+                        local_path.unwrap_or(&"not configured".to_string()),
+                        if local_exists {
+                            format!("{GREEN}✓{RESET}")
+                        } else {
+                            "✗".to_string()
+                        }
+                    );
+                    eprintln!(
+                        "  remote: {}",
+                        remote_path.unwrap_or(&"not configured".to_string())
+                    );
+                }
+
+                targets_status.insert(
+                    target.name.clone(),
+                    serde_json::json!({
+                        "type": "directory",
+                        "local_exists": local_exists,
+                    }),
+                );
+            }
+            "ryujinx" => {
+                let status = ryujinx::status(detected, target)?;
+
+                if !json {
+                    if let Some(saves) = status.get("saves").and_then(|s| s.as_object()) {
+                        for (tid, info) in saves {
+                            let name = info
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or(tid);
+                            let dir = info
+                                .get("direction")
+                                .or(info.get("status"))
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("unknown");
+
+                            let color = match dir {
+                                "synced" => GREEN,
+                                "push" | "pull" => YELLOW,
+                                _ => "",
+                            };
+                            eprintln!("  {name}: {color}{dir}{RESET}");
+                        }
+                    }
+                }
+
+                targets_status.insert(target.name.clone(), status);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(serde_json::json!({
+        "local": detected.local.name,
+        "remote": detected.remote.name,
+        "targets": targets_status,
+    }))
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    let direction = direction_from_flags(cli.push, cli.pull);
+
+    let command = cli.command.unwrap_or(Commands::Sync {
+        target: None,
+        only: None,
+    });
+
+    match command {
+        Commands::Init => {
+            config::generate_default_config()?;
+        }
+        Commands::Status => {
+            let config = config::Config::load()?;
+            let detected = config.detect()?;
+
+            if !cli.json {
+                eprintln!(
+                    "{BOLD}emusync{RESET} — local: {GREEN}{}{RESET}, remote: {}",
+                    detected.local.name, detected.remote.name
+                );
+                eprintln!();
+            }
+
+            let status = run_status(&detected, cli.json)?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            }
+        }
+        Commands::Sync { target, only } => {
+            let config = config::Config::load()?;
+            let detected = config.detect()?;
+
+            if !cli.json {
+                let mode = if cli.dry_run { " (dry run)" } else { "" };
+                eprintln!(
+                    "{BOLD}emusync{RESET} — local: {GREEN}{}{RESET}, remote: {}{mode}",
+                    detected.local.name, detected.remote.name
+                );
+                eprintln!();
+            }
+
+            let results = run_sync(
+                &detected,
+                target.as_deref(),
+                only.as_deref(),
+                direction,
+                cli.dry_run,
+                cli.json,
+            )?;
+
+            if cli.json {
+                let output = serde_json::json!({
+                    "synced": results,
+                    "dry_run": cli.dry_run,
+                    "exit_code": 0,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                eprintln!();
+                if results.is_empty() {
+                    eprintln!("{GREEN}everything up to date{RESET}");
+                } else {
+                    eprintln!(
+                        "{GREEN}synced {} item(s){RESET}",
+                        results.len()
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
