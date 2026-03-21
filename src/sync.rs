@@ -75,6 +75,7 @@ pub fn rsync(
             && !trimmed.contains("files...")
             && !trimmed.starts_with("created directory")
             && !trimmed.ends_with("(DRY RUN)")
+            && !trimmed.starts_with("Transfer starting")
     });
 
     Ok(transferred)
