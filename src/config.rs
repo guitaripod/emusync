@@ -141,6 +141,7 @@ pub fn generate_default_config() -> Result<()> {
     } else {
         eprintln!("Linux hints:");
         eprintln!("  Ryujinx data: ~/.config/Ryujinx");
+        eprintln!("  Ryujinx (Flatpak): ~/.var/app/org.ryujinx.Ryujinx/config/Ryujinx");
     }
 
     eprintln!();

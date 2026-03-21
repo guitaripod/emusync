@@ -23,7 +23,7 @@ pub fn rsync(
     dry_run: bool,
 ) -> Result<bool> {
     let mut cmd = Command::new("rsync");
-    cmd.arg("-avP");
+    cmd.args(["-rvltDP", "--no-perms", "--no-owner", "--no-group"]);
 
     if dry_run {
         cmd.arg("-n");
@@ -62,14 +62,19 @@ pub fn rsync(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let transferred = stdout.lines().any(|l| {
-        !l.is_empty()
-            && !l.starts_with("sending")
-            && !l.starts_with("sent ")
-            && !l.starts_with("total ")
-            && !l.starts_with("receiving")
-            && !l.contains("bytes/sec")
-            && !l.starts_with("building file list")
-            && !l.starts_with("./")
+        let trimmed = l.trim();
+        !trimmed.is_empty()
+            && !trimmed.starts_with("sending")
+            && !trimmed.starts_with("sent ")
+            && !trimmed.starts_with("total ")
+            && !trimmed.starts_with("receiving")
+            && !trimmed.contains("bytes/sec")
+            && !trimmed.starts_with("building file list")
+            && !trimmed.starts_with("./")
+            && !trimmed.contains("files to consider")
+            && !trimmed.contains("files...")
+            && !trimmed.starts_with("created directory")
+            && !trimmed.ends_with("(DRY RUN)")
     });
 
     Ok(transferred)
@@ -187,6 +192,33 @@ fn walk_dir_mtime(dir: &Path, newest: &mut u64) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub fn count_files_local(dir: &Path) -> u64 {
+    let mut count: u64 = 0;
+    count_recursive(dir, &mut count);
+    count
+}
+
+fn count_recursive(dir: &Path, count: &mut u64) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        if let Ok(ft) = entry.file_type() {
+            if ft.is_file() {
+                *count += 1;
+            } else if ft.is_dir() {
+                count_recursive(&entry.path(), count);
+            }
+        }
+    }
+}
+
+pub fn count_files_remote(ssh_target: &str, path: &str) -> Result<u64> {
+    let output = ssh_output(ssh_target, &format!("find '{path}' -type f 2>/dev/null | wc -l"))?;
+    Ok(output.trim().parse().unwrap_or(0))
 }
 
 fn ensure_trailing_slash(path: &str) -> String {

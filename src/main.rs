@@ -140,21 +140,34 @@ fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value
                     .map(|p| std::path::Path::new(p).exists())
                     .unwrap_or(false);
 
+                let local_files = if local_exists {
+                    local_path
+                        .map(|p| sync::count_files_local(std::path::Path::new(p)))
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+
+                let remote_files = remote_path
+                    .and_then(|p| {
+                        sync::count_files_remote(&detected.remote.ssh_target, p).ok()
+                    })
+                    .unwrap_or(0);
+
+                let in_sync = local_exists && local_files == remote_files;
+
                 if !json {
-                    let check = if local_exists {
-                        format!("{}ok{}", green(), reset())
-                    } else {
+                    let status_str = if !local_exists {
                         "missing".to_string()
+                    } else if in_sync {
+                        format!("{}synced{} ({} files)", green(), reset(), local_files)
+                    } else {
+                        format!(
+                            "{}out of sync{} (local: {}, remote: {})",
+                            yellow(), reset(), local_files, remote_files
+                        )
                     };
-                    eprintln!(
-                        "  local:  {} [{}]",
-                        local_path.unwrap_or(&"not configured".to_string()),
-                        check
-                    );
-                    eprintln!(
-                        "  remote: {}",
-                        remote_path.unwrap_or(&"not configured".to_string())
-                    );
+                    eprintln!("  {status_str}");
                 }
 
                 targets_status.insert(
@@ -162,6 +175,9 @@ fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value
                     serde_json::json!({
                         "type": "directory",
                         "local_exists": local_exists,
+                        "local_files": local_files,
+                        "remote_files": remote_files,
+                        "in_sync": in_sync,
                     }),
                 );
             }
