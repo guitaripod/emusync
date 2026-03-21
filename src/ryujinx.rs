@@ -168,15 +168,16 @@ pub fn sync_saves(
             Direction::Push => Direction::Push,
             Direction::Pull => Direction::Pull,
             Direction::Auto => {
-                if local_entry.mtime > remote_entry.mtime {
-                    Direction::Push
-                } else if remote_entry.mtime > local_entry.mtime {
-                    Direction::Pull
-                } else {
+                let diff = local_entry.mtime.abs_diff(remote_entry.mtime);
+                if diff <= 2 {
                     if !json {
                         eprintln!("  {name} — up to date");
                     }
                     continue;
+                } else if local_entry.mtime > remote_entry.mtime {
+                    Direction::Push
+                } else {
+                    Direction::Pull
                 }
             }
         };
@@ -471,12 +472,13 @@ pub fn status(
     for (title_id, local_entry) in &local_map {
         let name = title_name(title_id);
         if let Some(remote_entry) = remote_map.get(title_id) {
-            let dir = if local_entry.mtime > remote_entry.mtime {
-                "push"
-            } else if remote_entry.mtime > local_entry.mtime {
-                "pull"
-            } else {
+            let diff = local_entry.mtime.abs_diff(remote_entry.mtime);
+            let dir = if diff <= 2 {
                 "synced"
+            } else if local_entry.mtime > remote_entry.mtime {
+                "push"
+            } else {
+                "pull"
             };
             saves.insert(
                 title_id.clone(),
