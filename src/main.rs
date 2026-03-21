@@ -31,6 +31,7 @@ fn reset() -> &'static str {
 #[derive(Parser)]
 #[command(
     name = "emusync",
+    version,
     about = "Cross-machine emulation sync over SSH",
     long_about = "Sync emulator saves, mods, and shader caches between machines over SSH.\n\n\
         Supports two target types:\n  \
@@ -42,13 +43,17 @@ fn reset() -> &'static str {
         Run `emusync init` to generate a template.",
     after_help = "Examples:\n  \
         emusync                              Sync all targets\n  \
-        emusync sync                         Same as above\n  \
         emusync sync duckstation             Sync a specific target\n  \
+        emusync sync ryujinx                 Sync all Ryujinx data\n  \
         emusync sync ryujinx --only saves    Sync only Ryujinx saves\n  \
+        emusync sync ryujinx --only mods     Sync only Ryujinx mods\n  \
+        emusync sync ryujinx --only shaders  Sync only portable shader caches\n  \
         emusync sync --push                  Force local -> remote\n  \
-        emusync status                       Show sync state\n  \
-        emusync status --json                Machine-readable status\n  \
-        emusync --dry-run                    Preview without changes"
+        emusync sync --pull                  Force remote -> local\n  \
+        emusync status                       Show sync state for all targets\n  \
+        emusync status --json                Machine-readable sync state\n  \
+        emusync --dry-run                    Preview all sync operations\n  \
+        emusync --json                       Sync all, output JSON result"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -69,16 +74,43 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "Sync one or all targets (default when no subcommand given)")]
+    #[command(
+        about = "Sync one or all targets (default when no subcommand given)",
+        long_about = "Sync one or all configured targets between local and remote machines.\n\n\
+            Without a target name, syncs everything. With a target name, syncs only that target.\n\
+            For \"ryujinx\" targets, use --only to sync a specific subtarget.",
+        after_help = "Examples:\n  \
+            emusync sync                         Sync all targets\n  \
+            emusync sync duckstation             Sync one directory target\n  \
+            emusync sync ryujinx                 Sync all Ryujinx data\n  \
+            emusync sync ryujinx --only saves    Sync only Ryujinx saves\n  \
+            emusync sync ryujinx --only mods     Sync only Ryujinx mods\n  \
+            emusync sync ryujinx --only shaders  Sync only portable shader caches\n  \
+            emusync sync --push                  Force local -> remote\n  \
+            emusync sync --dry-run               Preview without changes"
+    )]
     Sync {
         #[arg(help = "Target name from config (omit to sync all targets)")]
         target: Option<String>,
         #[arg(long, help = "For ryujinx targets: sync only a subtarget [saves|mods|shaders]")]
         only: Option<String>,
     },
-    #[command(about = "Show sync status for all targets (file counts, Ryujinx save mappings)")]
+    #[command(
+        about = "Show sync status for all targets",
+        long_about = "Show sync status for all configured targets.\n\n\
+            For directory targets: compares file counts between local and remote.\n\
+            For ryujinx targets: shows per-game save mapping with title IDs,\n\
+            folder numbers on each machine, and sync direction (push/pull/synced).\n\n\
+            Use --json for machine-readable output."
+    )]
     Status,
-    #[command(about = "Generate a config template at ~/.config/emusync/config.json")]
+    #[command(
+        about = "Generate a config template at ~/.config/emusync/config.json",
+        long_about = "Generate a starter config at ~/.config/emusync/config.json.\n\n\
+            The template includes placeholder machine names and paths.\n\
+            Edit it with your actual SSH targets and emulator data paths,\n\
+            then run `emusync status` to verify detection works."
+    )]
     Init,
 }
 
