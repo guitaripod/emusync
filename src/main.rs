@@ -117,6 +117,41 @@ enum Commands {
     Init,
 }
 
+fn print_status_header(detected: &DetectedConfig) {
+    eprintln!(
+        "{}emusync{} — local: {}{}{}, remote: {}",
+        bold(), reset(), green(), detected.local.name, reset(), detected.remote.name
+    );
+    eprintln!();
+}
+
+fn print_sync_header(detected: &DetectedConfig, dry_run: bool) {
+    let mode = if dry_run { " (dry run)" } else { "" };
+    eprintln!(
+        "{}emusync{} — local: {}{}{}, remote: {}{mode}",
+        bold(), reset(), green(), detected.local.name, reset(), detected.remote.name
+    );
+    eprintln!();
+}
+
+fn print_sync_footer(results: &[serde_json::Value], json: bool, dry_run: bool) {
+    if json {
+        let output = serde_json::json!({
+            "synced": results,
+            "dry_run": dry_run,
+            "exit_code": 0,
+        });
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+    } else if results.is_empty() {
+        eprintln!("{}everything up to date{}", green(), reset());
+    } else {
+        eprintln!(
+            "{}synced {} item(s){}",
+            green(), results.len(), reset()
+        );
+    }
+}
+
 fn direction_from_flags(push: bool, pull: bool) -> Direction {
     if push {
         Direction::Push
@@ -294,61 +329,62 @@ fn main() -> Result<()> {
         }
         Commands::Status => {
             let config = config::Config::load()?;
-            let detected = config.detect(cli.remote.as_deref())?;
 
-            if !cli.json {
-                eprintln!(
-                    "{}emusync{} — local: {}{}{}, remote: {}",
-                    bold(), reset(), green(), detected.local.name, reset(), detected.remote.name
-                );
-                eprintln!();
-            }
-
-            let status = run_status(&detected, cli.json)?;
-
-            if cli.json {
-                println!("{}", serde_json::to_string_pretty(&status)?);
+            if cli.remote.is_some() {
+                let detected = config.detect(cli.remote.as_deref())?;
+                print_status_header(&detected);
+                let status = run_status(&detected, cli.json)?;
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&status)?);
+                }
+            } else {
+                let all = config.detect_all()?;
+                let mut all_statuses = Vec::new();
+                for detected in &all {
+                    print_status_header(detected);
+                    let status = run_status(detected, cli.json)?;
+                    all_statuses.push(status);
+                    if !cli.json && detected.remote.name != all.last().unwrap().remote.name {
+                        eprintln!();
+                    }
+                }
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&all_statuses)?);
+                }
             }
         }
         Commands::Sync { target, only } => {
             let config = config::Config::load()?;
-            let detected = config.detect(cli.remote.as_deref())?;
 
-            if !cli.json {
-                let mode = if cli.dry_run { " (dry run)" } else { "" };
-                eprintln!(
-                    "{}emusync{} — local: {}{}{}, remote: {}{mode}",
-                    bold(), reset(), green(), detected.local.name, reset(), detected.remote.name
-                );
-                eprintln!();
-            }
-
-            let results = run_sync(
-                &detected,
-                target.as_deref(),
-                only.as_deref(),
-                direction,
-                cli.dry_run,
-                cli.json,
-            )?;
-
-            if cli.json {
-                let output = serde_json::json!({
-                    "synced": results,
-                    "dry_run": cli.dry_run,
-                    "exit_code": 0,
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
+            if cli.remote.is_some() {
+                let detected = config.detect(cli.remote.as_deref())?;
+                print_sync_header(&detected, cli.dry_run);
+                let results = run_sync(
+                    &detected,
+                    target.as_deref(),
+                    only.as_deref(),
+                    direction,
+                    cli.dry_run,
+                    cli.json,
+                )?;
+                print_sync_footer(&results, cli.json, cli.dry_run);
             } else {
-                eprintln!();
-                if results.is_empty() {
-                    eprintln!("{}everything up to date{}", green(), reset());
-                } else {
-                    eprintln!(
-                        "{}synced {} item(s){}",
-                        green(), results.len(), reset()
-                    );
+                let all = config.detect_all()?;
+                let mut total_results = Vec::new();
+                for detected in &all {
+                    print_sync_header(detected, cli.dry_run);
+                    let results = run_sync(
+                        detected,
+                        target.as_deref(),
+                        only.as_deref(),
+                        direction,
+                        cli.dry_run,
+                        cli.json,
+                    )?;
+                    total_results.extend(results);
+                    eprintln!();
                 }
+                print_sync_footer(&total_results, cli.json, cli.dry_run);
             }
         }
     }

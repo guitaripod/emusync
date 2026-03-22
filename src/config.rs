@@ -52,39 +52,57 @@ impl Config {
         serde_json::from_str(&content).context("invalid config format")
     }
 
-    pub fn detect(&self, remote_override: Option<&str>) -> Result<DetectedConfig<'_>> {
-        for (i, machine) in self.machines.iter().enumerate() {
+    fn detect_local(&self) -> Result<&Machine> {
+        for machine in &self.machines {
             let has_local_path = self.targets.iter().any(|t| {
                 t.paths
                     .get(&machine.name)
                     .map(|p| Path::new(p).exists())
                     .unwrap_or(false)
             });
-
             if has_local_path {
-                let remote = if let Some(name) = remote_override {
-                    self.machines
-                        .iter()
-                        .find(|m| m.name == name)
-                        .ok_or_else(|| anyhow::anyhow!("unknown remote machine: {name}"))?
-                } else {
-                    let remote_idx = if i == 0 { 1 } else { 0 };
-                    if remote_idx >= self.machines.len() {
-                        bail!("need at least 2 machines in config");
-                    }
-                    &self.machines[remote_idx]
-                };
-                return Ok(DetectedConfig {
-                    local: &self.machines[i],
-                    remote,
-                    config: self,
-                });
+                return Ok(machine);
             }
         }
+        bail!("could not detect local machine — none of the configured paths exist on this system")
+    }
 
-        bail!(
-            "could not detect local machine — none of the configured paths exist on this system"
-        );
+    pub fn detect(&self, remote_override: Option<&str>) -> Result<DetectedConfig<'_>> {
+        let local = self.detect_local()?;
+        let remote = if let Some(name) = remote_override {
+            self.machines
+                .iter()
+                .find(|m| m.name == name)
+                .ok_or_else(|| anyhow::anyhow!("unknown remote machine: {name}"))?
+        } else {
+            self.machines
+                .iter()
+                .find(|m| m.name != local.name)
+                .ok_or_else(|| anyhow::anyhow!("need at least 2 machines in config"))?
+        };
+        Ok(DetectedConfig {
+            local,
+            remote,
+            config: self,
+        })
+    }
+
+    pub fn detect_all(&self) -> Result<Vec<DetectedConfig<'_>>> {
+        let local = self.detect_local()?;
+        let remotes: Vec<DetectedConfig<'_>> = self
+            .machines
+            .iter()
+            .filter(|m| m.name != local.name)
+            .map(|remote| DetectedConfig {
+                local,
+                remote,
+                config: self,
+            })
+            .collect();
+        if remotes.is_empty() {
+            bail!("need at least 2 machines in config");
+        }
+        Ok(remotes)
     }
 }
 
