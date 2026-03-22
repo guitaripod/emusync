@@ -52,7 +52,7 @@ impl Config {
         serde_json::from_str(&content).context("invalid config format")
     }
 
-    pub fn detect(&self) -> Result<DetectedConfig<'_>> {
+    pub fn detect(&self, remote_override: Option<&str>) -> Result<DetectedConfig<'_>> {
         for (i, machine) in self.machines.iter().enumerate() {
             let has_local_path = self.targets.iter().any(|t| {
                 t.paths
@@ -62,13 +62,21 @@ impl Config {
             });
 
             if has_local_path {
-                let remote_idx = if i == 0 { 1 } else { 0 };
-                if remote_idx >= self.machines.len() {
-                    bail!("need at least 2 machines in config");
-                }
+                let remote = if let Some(name) = remote_override {
+                    self.machines
+                        .iter()
+                        .find(|m| m.name == name)
+                        .ok_or_else(|| anyhow::anyhow!("unknown remote machine: {name}"))?
+                } else {
+                    let remote_idx = if i == 0 { 1 } else { 0 };
+                    if remote_idx >= self.machines.len() {
+                        bail!("need at least 2 machines in config");
+                    }
+                    &self.machines[remote_idx]
+                };
                 return Ok(DetectedConfig {
                     local: &self.machines[i],
-                    remote: &self.machines[remote_idx],
+                    remote,
                     config: self,
                 });
             }

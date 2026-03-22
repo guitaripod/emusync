@@ -70,6 +70,9 @@ struct Cli {
 
     #[arg(long, global = true, help = "Output structured JSON to stdout (for AI agents and scripts)")]
     json: bool,
+
+    #[arg(long, global = true, help = "Override remote machine (by name from config)")]
+    remote: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -291,7 +294,7 @@ fn main() -> Result<()> {
         }
         Commands::Status => {
             let config = config::Config::load()?;
-            let detected = config.detect()?;
+            let detected = config.detect(cli.remote.as_deref())?;
 
             if !cli.json {
                 eprintln!(
@@ -309,7 +312,7 @@ fn main() -> Result<()> {
         }
         Commands::Sync { target, only } => {
             let config = config::Config::load()?;
-            let detected = config.detect()?;
+            let detected = config.detect(cli.remote.as_deref())?;
 
             if !cli.json {
                 let mode = if cli.dry_run { " (dry run)" } else { "" };

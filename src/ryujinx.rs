@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::DetectedConfig;
-use crate::sync::{Direction, newest_mtime_recursive, rsync_bidirectional, rsync_one_way, ssh_output};
+use crate::sync::{Direction, newest_mtime_recursive, rsync_bidirectional, rsync_one_way};
+use crate::sync::ssh_output;
 
 pub struct SaveEntry {
     pub folder: String,
@@ -68,60 +69,77 @@ fn build_remote_save_map(
     ssh_target: &str,
     ryujinx_path: &str,
 ) -> Result<HashMap<String, SaveEntry>> {
+    let temp_dir = std::env::temp_dir().join("emusync_extradata");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let remote_save = format!("{ssh_target}:{ryujinx_path}/bis/user/save/");
+    let rsync_result = std::process::Command::new("rsync")
+        .args(["-rlt", "--include=*/", "--include=ExtraData0", "--exclude=*"])
+        .arg(&remote_save)
+        .arg(format!("{}/", temp_dir.display()))
+        .output()
+        .context("failed to rsync ExtraData0 files")?;
+
+    if !rsync_result.status.success() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let stderr = String::from_utf8_lossy(&rsync_result.stderr);
+        bail!("failed to fetch ExtraData0 files: {}", stderr.trim());
+    }
+
     let script = format!(
         r#"for d in '{ryujinx_path}/bis/user/save'/*/; do
-  f="${{d}}ExtraData0"
-  if [ -f "$f" ]; then
-    tid=$(xxd -p -l 8 "$f")
-    stype=$(xxd -p -s 32 -l 4 "$f")
-    newest=$(find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -c %Y {{}} + 2>/dev/null || find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -f %m {{}} + 2>/dev/null | sort -rn | head -1)
-    echo "$(basename "$d")|$tid|$stype|${{newest:-0}}"
-  fi
+  [ -f "${{d}}ExtraData0" ] || continue
+  newest=$(find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -c %Y {{}} + 2>/dev/null || find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -f %m {{}} + 2>/dev/null | sort -rn | head -1)
+  echo "$(basename "$d")|${{newest:-0}}"
 done"#
     );
 
     let output = ssh_output(ssh_target, &script)?;
-    let mut map = HashMap::new();
-
+    let mut mtime_map: HashMap<String, u64> = HashMap::new();
     for line in output.lines() {
         let parts: Vec<&str> = line.split('|').collect();
-        if parts.len() < 4 {
-            continue;
+        if parts.len() >= 2 {
+            let folder = parts[0].to_string();
+            let mtime: u64 = parts[1].trim().parse().unwrap_or(0);
+            mtime_map.insert(folder, mtime);
         }
-
-        let folder = parts[0].to_string();
-        let tid_hex = parts[1].trim();
-        let stype_hex = parts[2].trim();
-        let mtime_str = parts[3].trim();
-
-        if stype_hex != "01000000" {
-            continue;
-        }
-
-        let title_id = hex_to_title_id(tid_hex);
-        let mtime: u64 = mtime_str.parse().unwrap_or(0);
-
-        map.insert(title_id, SaveEntry { folder, mtime });
     }
 
+    let mut map = HashMap::new();
+    let entries = match std::fs::read_dir(&temp_dir) {
+        Ok(e) => e,
+        Err(_) => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Ok(map);
+        }
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+
+        let folder_name = entry.file_name().to_string_lossy().to_string();
+        let extra_data_path = entry.path().join("ExtraData0");
+
+        if !extra_data_path.exists() {
+            continue;
+        }
+
+        let bytes = std::fs::read(&extra_data_path)?;
+        if let Some((title_id, save_type)) = parse_extra_data(&bytes) {
+            if save_type != 1 {
+                continue;
+            }
+            let mtime = mtime_map.get(&folder_name).copied().unwrap_or(0);
+            map.insert(title_id, SaveEntry { folder: folder_name, mtime });
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(map)
-}
-
-fn hex_to_title_id(hex: &str) -> String {
-    if hex.len() < 16 {
-        return hex.to_uppercase();
-    }
-    let bytes: Vec<u8> = (0..hex.len())
-        .step_by(2)
-        .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
-        .collect();
-
-    if bytes.len() >= 8 {
-        let val = u64::from_le_bytes(bytes[0..8].try_into().unwrap_or_default());
-        format!("{:016X}", val)
-    } else {
-        hex.to_uppercase()
-    }
 }
 
 pub fn title_name(id: &str) -> &str {
@@ -317,6 +335,7 @@ pub fn sync_shaders(
     let mut excludes = detected.config.exclude.clone();
     excludes.push("vulkan_nvidia.*".to_string());
     excludes.push("vulkan_apple.*".to_string());
+    excludes.push("vulkan_amd.*".to_string());
 
     let remote_target = detected.remote_rsync_path(&remote_games);
 
