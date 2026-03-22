@@ -1,6 +1,6 @@
 [package]
 name = "emusync"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Cross-machine emulation save, mod, and shader cache sync over SSH"
 repository = "https://github.com/guitaripod/emusync"
