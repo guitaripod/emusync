@@ -16,7 +16,6 @@ Two target types:
 - Rust (for building)
 - `rsync` on both machines
 - SSH access between machines
-- `xxd` on the remote machine (only needed for Ryujinx targets)
 
 ## Installation
 
