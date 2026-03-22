@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::DetectedConfig;
-use crate::sync::{Direction, newest_mtime_recursive, rsync_bidirectional, rsync_one_way};
+use crate::sync::{Direction, newest_mtime_filtered, rsync_bidirectional, rsync_one_way};
 use crate::sync::ssh_output;
 
 pub struct SaveEntry {
@@ -51,7 +51,7 @@ fn build_local_save_map(ryujinx_path: &Path) -> Result<HashMap<String, SaveEntry
                 continue;
             }
 
-            let mtime = newest_mtime_recursive(&entry.path())?;
+            let mtime = newest_mtime_filtered(&entry.path(), &[".lock", "ExtraData"])?;
             map.insert(
                 title_id,
                 SaveEntry {
@@ -90,7 +90,7 @@ fn build_remote_save_map(
     let script = format!(
         r#"for d in '{ryujinx_path}/bis/user/save'/*/; do
   [ -f "${{d}}ExtraData0" ] || continue
-  newest=$(find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -c %Y {{}} + 2>/dev/null || find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -f %m {{}} + 2>/dev/null | sort -rn | head -1)
+  newest=$( (find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -c %Y {{}} + 2>/dev/null || find "$d" -type f ! -name '.lock' ! -name 'ExtraData*' -exec stat -f %m {{}} + 2>/dev/null) | sort -rn | head -1)
   echo "$(basename "$d")|${{newest:-0}}"
 done"#
     );

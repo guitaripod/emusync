@@ -163,13 +163,13 @@ pub fn ssh_output(target: &str, command: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-pub fn newest_mtime_recursive(dir: &Path) -> Result<u64> {
+pub fn newest_mtime_filtered(dir: &Path, exclude_prefixes: &[&str]) -> Result<u64> {
     let mut newest: u64 = 0;
-    walk_dir_mtime(dir, &mut newest)?;
+    walk_dir_mtime(dir, &mut newest, exclude_prefixes)?;
     Ok(newest)
 }
 
-fn walk_dir_mtime(dir: &Path, newest: &mut u64) -> Result<()> {
+fn walk_dir_mtime(dir: &Path, newest: &mut u64, exclude_prefixes: &[&str]) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return Ok(()),
@@ -179,8 +179,13 @@ fn walk_dir_mtime(dir: &Path, newest: &mut u64) -> Result<()> {
         let entry = entry?;
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            walk_dir_mtime(&entry.path(), newest)?;
+            walk_dir_mtime(&entry.path(), newest, exclude_prefixes)?;
         } else if ft.is_file() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if exclude_prefixes.iter().any(|p| name_str.starts_with(p)) {
+                continue;
+            }
             let mtime = entry
                 .metadata()?
                 .modified()?
