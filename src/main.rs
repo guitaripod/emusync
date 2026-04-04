@@ -236,7 +236,7 @@ fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value
 
                 let local_files = if local_exists {
                     local_path
-                        .map(|p| sync::count_files_local(std::path::Path::new(p)))
+                        .map(|p| sync::count_files_local(std::path::Path::new(p), &detected.config.exclude))
                         .unwrap_or(0)
                 } else {
                     0
@@ -244,7 +244,7 @@ fn run_status(detected: &DetectedConfig, json: bool) -> Result<serde_json::Value
 
                 let remote_files = remote_path
                     .and_then(|p| {
-                        sync::count_files_remote(&detected.remote.ssh_target, p).ok()
+                        sync::count_files_remote(&detected.remote.ssh_target, p, &detected.config.exclude).ok()
                     })
                     .unwrap_or(0);
 

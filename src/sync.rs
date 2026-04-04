@@ -200,30 +200,60 @@ fn walk_dir_mtime(dir: &Path, newest: &mut u64, exclude_prefixes: &[&str]) -> Re
     Ok(())
 }
 
-pub fn count_files_local(dir: &Path) -> u64 {
+pub fn count_files_local(dir: &Path, excludes: &[String]) -> u64 {
     let mut count: u64 = 0;
-    count_recursive(dir, &mut count);
+    count_recursive(dir, &mut count, excludes);
     count
 }
 
-fn count_recursive(dir: &Path, count: &mut u64) {
+fn count_recursive(dir: &Path, count: &mut u64, excludes: &[String]) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
         if let Ok(ft) = entry.file_type() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if excludes.iter().any(|ex| {
+                if let Some(prefix) = ex.strip_suffix('*') {
+                    name_str.starts_with(prefix)
+                } else {
+                    name_str.as_ref() == ex
+                }
+            }) {
+                continue;
+            }
             if ft.is_file() {
                 *count += 1;
             } else if ft.is_dir() {
-                count_recursive(&entry.path(), count);
+                count_recursive(&entry.path(), count, excludes);
             }
         }
     }
 }
 
-pub fn count_files_remote(ssh_target: &str, path: &str) -> Result<u64> {
-    let output = ssh_output(ssh_target, &format!("find '{path}' -type f 2>/dev/null | wc -l"))?;
+pub fn count_files_remote(ssh_target: &str, path: &str, excludes: &[String]) -> Result<u64> {
+    let mut find_excludes = String::new();
+    for ex in excludes {
+        if let Some(prefix) = ex.strip_suffix('*') {
+            find_excludes.push_str(&format!(" ! -name '{prefix}*'"));
+        } else {
+            find_excludes.push_str(&format!(" ! -name '{ex}'"));
+        }
+    }
+    let output = ssh_output(
+        ssh_target,
+        &format!("find '{path}' -type f{find_excludes} 2>/dev/null | wc -l"),
+    )?;
+    let count = output.trim().parse().unwrap_or(0);
+    if count > 0 {
+        return Ok(count);
+    }
+    let output = ssh_output(
+        ssh_target,
+        &format!("ls -1Rp '{path}' 2>/dev/null | grep -cv '/$\\|^$\\|:'"),
+    )?;
     Ok(output.trim().parse().unwrap_or(0))
 }
 
