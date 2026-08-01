@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::path::Path;
 
 use crate::config::DetectedConfig;
-use crate::sync::{Direction, rsync_bidirectional};
+use crate::sync::{Direction, remote_parent_exists, rsync_bidirectional};
 
 pub fn sync(
     detected: &DetectedConfig,
@@ -34,6 +34,13 @@ pub fn sync(
     if !Path::new(local_path).exists() {
         if !json {
             eprintln!("  skipped (local path does not exist)");
+        }
+        return Ok(None);
+    }
+
+    if !remote_parent_exists(&detected.remote.ssh_target, remote_path) {
+        if !json {
+            eprintln!("  skipped (remote parent directory does not exist)");
         }
         return Ok(None);
     }

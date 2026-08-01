@@ -81,6 +81,28 @@ pub fn rsync(
     Ok(transferred)
 }
 
+/// Whether a remote directory can be created, i.e. its parent exists.
+///
+/// rsync creates the last path component but not the ones above it, so a target
+/// pointing into an unmounted volume or an uninstalled emulator aborts the whole
+/// run. Checking first lets that one target be skipped instead.
+pub fn remote_parent_exists(ssh_target: &str, remote_path: &str) -> bool {
+    let parent = match Path::new(remote_path).parent().and_then(|p| p.to_str()) {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => return true,
+    };
+    Command::new("ssh")
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", ssh_target])
+        .arg(format!("test -d {}", shell_quote(&parent)))
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
 pub fn rsync_bidirectional(
     local_path: &str,
     ssh_target: &str,
